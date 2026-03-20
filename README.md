@@ -1,25 +1,24 @@
 # skillctl
 
-`skillctl` is a lazy-loading wrapper for the `claude`, `codex`, and `gemini` CLIs. Instead of loading every skill up front, it injects only the ones you actually call.
+`skillctl` is a wrapper for the `claude`, `codex`, and `gemini` CLIs. It keeps skill discovery local, lets you load a skill explicitly with `@skill_name`, and gives you one workflow across multiple CLIs.
 
 ## What It Solves
 
 Tools like Claude Code, Codex, and Gemini CLI support user-defined **skills**, usually stored in directories such as `~/.codex/skills/` and `~/.claude/skills/`.
 
-**The problem**: most CLIs load every skill into the system prompt at startup. If you have 20 skills and each is about 2,000 tokens, that is **40,000 tokens** before you even start, whether you use them or not.
+**The problem**: skill behavior differs across CLIs, and it is not always clear how much skill content reaches the model up front. If a CLI eagerly loads full skill bodies, token overhead can grow fast. If it already uses staged routing, the token savings from `skillctl` may be small.
 
 **skillctl's approach**:
 
 ```text
-Native mode: CLI starts -> loads all 20 skills -> 40,000 tokens
-skillctl:   CLI starts -> empty skills directory -> user requests @brainstorming -> injects only 1 -> ~2,000 tokens
-                                                                                   savings ~= 95%
+skillctl: build a local skill index -> expose skill names for explicit loading ->
+          inject a skill file only when the user asks for it with @skill_name
 ```
 
 1. Create an isolated runtime with an empty skills directory while preserving auth and config
-2. Build a lightweight skill index
-3. Inject a skill only when the user types `@skill_name`
-4. Report token savings when the session ends
+2. Build a lightweight local index from skill metadata
+3. Inject a skill file only when the user types `@skill_name`
+4. Report rough token estimates for what `skillctl` injected during the session
 
 ## In Practice
 
@@ -30,15 +29,18 @@ Tested with `codex` using `@brainstorming help me`:
 - ✅ Codex follows the brainstorming skill workflow as expected
 - ✅ Token statistics are printed when the session ends
 
-Savings depend on how many skills you have and how large they are:
+What you get from this project:
 
-| Scenario | Eager Load | skillctl | Savings |
-|------|---------|----------|--------|
-| 10 skills × 1000 tokens, 2 used | 10,000 | ~2,050 | ~80% |
-| 20 skills × 2000 tokens, 1 used | 40,000 | ~2,050 | ~95% |
-| 3 skills × 30 tokens, all used | 90 | ~120 | 0% (too small to matter) |
+- ✅ Explicit control over when a skill file is injected
+- ✅ One wrapper and one indexing model across multiple CLIs
+- ✅ Local suggestion mode based on skill metadata
+- ✅ A rough count of what `skillctl` injected
 
-> **In short: this helps most when you have a lot of skills but only use a few in any given session.**
+Token savings are conditional:
+
+- If a CLI would otherwise preload full skill bodies, `skillctl` can cut prompt overhead a lot.
+- If a CLI already does staged discovery and on-demand loading, the token savings may be modest.
+- In that case, the main value is control and consistency, not huge token savings.
 
 ## Installation
 
@@ -89,7 +91,7 @@ curl -fsSL https://raw.githubusercontent.com/pseudoctor/skillctl/main/uninstall.
 
 ### Shim Mode (Recommended)
 
-After installing the shim, you can keep using the CLI the same way you already do:
+After installing the shim, you can keep using the CLI as before:
 
 ```bash
 # Install the shim
@@ -128,7 +130,7 @@ Once the CLI is running, type as usual. When you want a skill, prefix it with `@
 @brainstorming help me evaluate whether this feature is worth building
 ```
 
-When you press Enter, skillctl injects the full skill content. After that, you usually do not need to mention it again because the skill is already in the conversation context.
+When you press Enter, skillctl injects the selected skill file into the session. After that, you usually do not need to mention it again because the content is already in the conversation.
 
 ### Common Commands
 
@@ -190,7 +192,7 @@ If you want to write the literal string `@brainstorming` without loading the ski
 2. **PTY proxy**: use `pty.fork()` to spawn the child process and put the real terminal into raw mode
 3. **Transparent forwarding**: send keyboard input straight to the child process so the TUI keeps working
 4. **Shadow tracking**: `ShadowBuffer` tracks what the user is typing in the background
-5. **On-demand injection**: when Enter is pressed, parse `@skill_name`, inject the skill body, and then submit the message
+5. **On-demand injection**: when Enter is pressed, parse `@skill_name`, inject the selected skill file, and then submit the message
 
 ### Skill Index
 
@@ -203,7 +205,7 @@ skillctl scans these directories for skills:
 
 Each skill directory must contain one of `SKILL.md`, `CLAUDE.md`, `GEMINI.md`, or `README.md`.
 
-Frontmatter can define the name, aliases, and description:
+Frontmatter can define the name, aliases, and description. `skillctl` uses those fields to build its local index and drive resolution or suggestions:
 
 ```markdown
 ---
@@ -219,7 +221,7 @@ Help the user generate creative ideas...
 
 ### Priority
 
-- Project scope wins over global scope when the skill names collide
+- Project scope wins when skill names collide
 - Skills are isolated by CLI, so a `codex` session loads only `codex` and project skills
 
 ## Project Structure
@@ -256,8 +258,8 @@ skillctl/
 ## Notes
 
 - macOS and Linux are supported. Windows is not.
-- `@skill_name` is the only lazy-load trigger.
-- Token statistics are rough estimates (`character_count / 4`). They are meant for comparison, not exact accounting.
+- `@skill_name` is the only trigger that loads a skill file into the session.
+- Token statistics are rough estimates (`character_count / 4`). They reflect what `skillctl` injected, not the full internal accounting of the underlying CLI.
 - `--suggest-skills` shows relevant local skills but does not inject them.
 - For `--help`, `--version`, or explicit subcommands, skillctl passes the command straight through to the underlying CLI.
 - The shim does not overwrite same-named files it does not manage.
