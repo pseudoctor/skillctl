@@ -79,6 +79,8 @@ def load_registry(cache_dir: Path) -> list[SkillRecord]:
             upgraded.setdefault("char_count", len(content))
             upgraded.setdefault("estimated_tokens", estimate_tokens(content))
             dirty = True
+        if isinstance(upgraded.get("aliases"), list):
+            upgraded["aliases"] = tuple(upgraded["aliases"])
         try:
             records.append(SkillRecord(**upgraded))
         except TypeError:
@@ -165,6 +167,11 @@ def _extract_summary(content: str) -> str:
 
 
 def _parse_frontmatter(content: str) -> dict[str, str]:
+    """Parse YAML frontmatter delimited by ``---``.
+
+    Only supports single-line ``key: value`` pairs. Multi-line values,
+    nested structures, and block scalars (``|``, ``>``) are not handled.
+    """
     lines = content.splitlines()
     if not lines or lines[0].strip() != "---":
         return {}

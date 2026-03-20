@@ -42,7 +42,20 @@ REPO_DIR=$(ensure_repo)
 PYTHONPATH_PREFIX="${REPO_DIR}${PYTHONPATH+:$PYTHONPATH}"
 
 echo "[skillctl] Removing shims from ${SHIM_DIR}"
-PYTHONPATH="${PYTHONPATH_PREFIX}" "${PYTHON_BIN}" -m skillctl shim remove --dir "${SHIM_DIR}" || true
+if PYTHONPATH="${PYTHONPATH_PREFIX}" "${PYTHON_BIN}" -m skillctl shim remove --dir "${SHIM_DIR}" 2>/dev/null; then
+  :
+else
+  # Standalone fallback: remove shim files that match the skillctl pattern
+  # without requiring the Python package to be importable.
+  echo "[skillctl] Python module unavailable, removing shims manually"
+  for cli in claude codex gemini; do
+    shim="${SHIM_DIR}/${cli}"
+    if [ -f "${shim}" ] && grep -q "SKILLCTL_REAL_" "${shim}" 2>/dev/null && grep -q "\-m skillctl " "${shim}" 2>/dev/null; then
+      rm -f "${shim}"
+      echo "[skillctl] Removed ${shim}"
+    fi
+  done
+fi
 
 echo "[skillctl] Uninstalling Python package"
 "${PYTHON_BIN}" -m pip uninstall -y skillctl || true

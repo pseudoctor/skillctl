@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
+
+from . import __version__
 
 from .config import default_config
 from .proxy import LazySkillInjector, spawn_interactive
@@ -19,6 +22,10 @@ def main(argv: list[str] | None = None) -> int:
         args.args = list(unknown)
     config = default_config()
     _validate_scope_args(parser, args)
+
+    if args.version:
+        print(f"skillctl {__version__}")
+        return 0
 
     if args.command == "index" and args.index_command == "rebuild":
         records = build_registry(config)
@@ -105,13 +112,18 @@ def main(argv: list[str] | None = None) -> int:
         finally:
             runtime.cleanup()
 
+    if not args.command:
+        parser.print_help()
+        return 2
+
     parser.error("Unsupported command")
     return 2
 
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="skillctl")
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    parser.add_argument("-V", "--version", action="store_true", default=False)
+    subparsers = parser.add_subparsers(dest="command")
 
     index_parser = subparsers.add_parser("index")
     index_subparsers = index_parser.add_subparsers(dest="index_command", required=True)
@@ -182,18 +194,22 @@ def _session_records(config, args, cli_name: str):
     return [
         record
         for record in records
-        if record.scope == "project" or record.source_cli in {cli_name, "project"}
+        if record.scope == "project" or record.source_cli == cli_name
     ]
 
 
 def _command_for_cli(config, cli_name: str) -> str:
     real_env_name = f"SKILLCTL_REAL_{cli_name.upper()}_BIN"
-    import os
-
     return os.environ.get(real_env_name, config.cli_commands[cli_name])
 
 
 def _should_passthrough(provider_args: list[str]) -> bool:
+    """Decide whether to passthrough args directly to the underlying CLI.
+
+    Returns True for help/version flags (anywhere in args, since the
+    underlying CLI should handle them regardless of position) and for
+    explicit subcommands (first arg doesn't start with '-').
+    """
     if not provider_args:
         return False
     if any(arg in {"-h", "--help", "-V", "--version"} for arg in provider_args):

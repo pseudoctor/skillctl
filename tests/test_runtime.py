@@ -1,4 +1,5 @@
 import shutil
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -9,7 +10,7 @@ from skillctl.runtime import _link, create_runtime
 
 class RuntimeTests(unittest.TestCase):
     def test_runtime_creates_isolated_codex_home(self) -> None:
-        tmp_path = Path(f"{self._testMethodName}-tmp").resolve()
+        tmp_path = Path(tempfile.mkdtemp(prefix=f"{self._testMethodName}-"))
         workspace = tmp_path / "workspace"
         workspace.mkdir(parents=True, exist_ok=True)
         self.addCleanup(lambda: shutil.rmtree(tmp_path, ignore_errors=True))
@@ -47,7 +48,7 @@ class RuntimeTests(unittest.TestCase):
             session.cleanup()
 
     def test_link_falls_back_to_copy_when_symlink_fails(self) -> None:
-        tmp_path = Path(f"{self._testMethodName}-tmp").resolve()
+        tmp_path = Path(tempfile.mkdtemp(prefix=f"{self._testMethodName}-"))
         tmp_path.mkdir(parents=True, exist_ok=True)
         self.addCleanup(lambda: shutil.rmtree(tmp_path, ignore_errors=True))
 

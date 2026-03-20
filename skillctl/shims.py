@@ -45,7 +45,7 @@ def remove_shims(shim_dir: Path, platform_name: str | None = None) -> list[Path]
     removed: list[Path] = []
     for cli_name in SUPPORTED_CLIS:
         for path in _shim_paths(shim_dir, cli_name, platform_name):
-            if path.exists():
+            if path.exists() and _looks_like_skillctl_shim(path):
                 path.unlink()
                 removed.append(path)
     return removed
@@ -67,9 +67,11 @@ def collect_status(shim_dir: Path, platform_name: str | None = None) -> list[dic
             {
                 "cli": cli_name,
                 "shim_path": str(primary_path),
-                "installed": "yes" if any(path.exists() for path in _shim_paths(resolved_shim_dir, cli_name, platform_name)) else "no",
+                "installed": "yes"
+                if any(path.exists() and _looks_like_skillctl_shim(path) for path in _shim_paths(resolved_shim_dir, cli_name, platform_name))
+                else "no",
                 "on_path": "yes" if str(resolved_shim_dir) in path_entries else "no",
-                "system_target": _find_real_bin(cli_name, resolved_shim_dir, platform_name) or "",
+                "system_target": _find_real_bin(cli_name, str(resolved_shim_dir), platform_name) or "",
             }
         )
     return rows
@@ -94,11 +96,19 @@ def resolve_shims(shim_dir: Path, platform_name: str | None = None) -> list[Shim
     if platform_name == "nt":
         raise NotImplementedError("Windows is not supported")
     specs: list[ShimSpec] = []
+    found_real_bin = False
     for cli_name in SUPPORTED_CLIS:
-        real_bin = _resolve_real_bin(cli_name, shim_dir, platform_name)
+        real_bin = _find_real_bin(cli_name, str(shim_dir.resolve()), platform_name)
+        if not real_bin:
+            continue
+        found_real_bin = True
         for shim_path in _shim_paths(shim_dir, cli_name, platform_name):
+            if shim_path.exists() and not _looks_like_skillctl_shim(shim_path):
+                continue
             specs.append(ShimSpec(cli_name=cli_name, path=shim_path, real_bin=real_bin))
-    return specs
+    if specs or found_real_bin:
+        return specs
+    raise FileNotFoundError("Could not find any supported CLI binaries on PATH")
 
 
 def _render_shim(spec: ShimSpec, platform_name: str) -> str:
@@ -119,19 +129,13 @@ def _make_executable(path: Path) -> None:
     path.chmod(mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
-def _resolve_real_bin(cli_name: str, shim_dir: Path, platform_name: str) -> str:
-    resolved = _find_real_bin(cli_name, str(shim_dir.resolve()), platform_name)
-    if resolved:
-        return resolved
-    raise FileNotFoundError(f"Could not find real CLI binary for '{cli_name}' on PATH")
-
-
 def _find_real_bin(cli_name: str, shim_dir: str, platform_name: str) -> str | None:
+    resolved_shim_dir = str(Path(shim_dir).expanduser().resolve())
     for entry in os.environ.get("PATH", "").split(os.pathsep):
         if not entry:
             continue
         resolved_entry = str(Path(entry).expanduser().resolve())
-        if resolved_entry == shim_dir:
+        if resolved_entry == resolved_shim_dir:
             continue
         for candidate in _candidate_bins(Path(resolved_entry), cli_name, platform_name):
             if not candidate.exists() or not os.access(candidate, os.X_OK):

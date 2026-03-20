@@ -72,6 +72,8 @@ def _link(source: Path, target: Path) -> None:
         target.symlink_to(source, target_is_directory=source.is_dir())
         return
     except FileExistsError:
+        import sys
+        sys.stderr.write(f"[skillctl] Symlink target already exists, skipping: {target}\n")
         return
     except OSError:
         if source.is_dir():

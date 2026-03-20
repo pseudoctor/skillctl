@@ -1,209 +1,275 @@
 # skillctl
 
-`skillctl` 是一个给 `claude`、`codex`、`gemini` CLI 用的外层懒加载启动器。
+给 `claude`、`codex`、`gemini` CLI 用的懒加载 skill 启动器。通过按需注入替代全量加载，显著减少每次会话的 token 消耗。
 
-它解决的问题很直接：
-- 启动时不默认把所有 global/project skills 全量塞进上下文。
-- 先建立一个轻量 skill 索引。
-- 只有当你在输入里显式写 `@skill_name` 时，才注入该 skill 正文。
+## 解决什么问题
 
-## 当前能力
+AI 编程 CLI（Claude Code、Codex、Gemini CLI）支持用户定义的 **skills**（自定义指令文件），存放在 `~/.codex/skills/`、`~/.claude/skills/` 等目录。
 
-- 扫描全局和项目 skill
-- 生成本地索引缓存
-- `@skill_name` 按需加载
-- 本地粗略 token 统计
-- 项目同名 skill 覆盖全局 skill
-- 为 `claude`、`codex`、`gemini` 构建隔离运行时
-- 安装 shim 后继续直接使用 `claude`、`codex`、`gemini`
+**问题**：CLI 启动时会把所有 skills 全量塞进系统提示词。如果你有 20 个 skills、每个约 2000 tokens，每次会话的系统提示词就包含 **40,000 tokens** — 即使你一个 skill 都没用到。
 
-## 快速开始
+**skillctl 的方案**：
 
-### GitHub 一行安装
-
-当前仓库地址：
-- `https://github.com/pseudoctor/skillctl`
-
-下面示例默认使用 `main` 分支。如果你的默认分支不是 `main`，把命令里的 `main` 替换成真实分支名。当前仅支持 macOS / Linux。
-
-macOS / Linux:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/pseudoctor/skillctl/main/install.sh | SKILLCTL_REPO_URL="https://github.com/pseudoctor/skillctl.git" SKILLCTL_REPO_REF="main" sh
+```
+原生模式：   CLI 启动 → 加载全部 20 个 skills → 40,000 tokens
+skillctl：  CLI 启动 → 空 skills 目录 → 用户请求 @brainstorming → 只注入 1 个 → ~2,000 tokens
+                                                                    节省 ≈ 95%
 ```
 
-这条命令会：
-- 下载安装脚本
-- 先验证 `claude` / `codex` / `gemini` 真实 CLI 二进制都能找到
-- 自动 clone 仓库到本地默认目录
-- 执行安装、索引重建和 shim 安装
+1. 创建隔离运行时（空 skills 目录 + 保留认证和配置）
+2. 建立轻量级 skill 索引
+3. 只在用户输入 `@skill_name` 时注入对应 skill 正文
+4. 会话结束时报告 token 节省情况
 
-### GitHub 一行卸载
+## 实际效果
 
-macOS / Linux:
+使用 `codex` 实测，输入 `@brainstorming help me`：
+
+- ✅ TUI 界面正常（方向键、Tab、Ctrl+C 均可用）
+- ✅ codex 正确接收并理解注入的 skill 内容
+- ✅ codex 按 brainstorming skill 的流程引导用户
+- ✅ 会话结束时输出 token 统计
+
+Token 节省效果取决于 skills 的数量和大小：
+
+| 场景 | 全量加载 | skillctl | 节省率 |
+|------|---------|----------|--------|
+| 10 skills × 1000 tokens, 用 2 个 | 10,000 | ~2,050 | ~80% |
+| 20 skills × 2000 tokens, 用 1 个 | 40,000 | ~2,050 | ~95% |
+| 3 skills × 30 tokens, 全部使用 | 90 | ~120 | 0%（太小，不值得） |
+
+> **结论：skills 越多、每次用到的越少，节省效果越显著。**
+
+## 安装
+
+### 前置要求
+
+- macOS 或 Linux
+- Python ≥ 3.10
+- 至少安装了 `claude`、`codex`、`gemini` 中的一个
+
+### 方式一：一行远程安装
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/pseudoctor/skillctl/main/uninstall.sh | SKILLCTL_REPO_URL="https://github.com/pseudoctor/skillctl.git" SKILLCTL_REPO_REF="main" sh
+curl -fsSL https://raw.githubusercontent.com/pseudoctor/skillctl/main/install.sh \
+  | SKILLCTL_REPO_URL="https://github.com/pseudoctor/skillctl.git" sh
 ```
 
-如果还要一并删除缓存：
+这条命令会自动：clone 仓库 → 验证可用 CLI → 安装 Python 包 → 重建 skill 索引 → 安装 shim。
 
-macOS / Linux:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/pseudoctor/skillctl/main/uninstall.sh | REMOVE_CACHE=1 SKILLCTL_REPO_URL="https://github.com/pseudoctor/skillctl.git" SKILLCTL_REPO_REF="main" sh
-```
-
-这条命令会：
-- 下载卸载脚本
-- 定位本地安装目录，必要时临时 clone 仓库
-- 移除 shim
-- 卸载 Python 包
-- 可选删除安装仓库里的 `.skillctl` 缓存
-
-### 一键安装
-
-macOS / Linux:
+### 方式二：本地安装
 
 ```bash
-cd /Users/armewang/Documents/CS-Tech/Local/skillctl
-chmod +x install.sh uninstall.sh
+git clone https://github.com/pseudoctor/skillctl.git
+cd skillctl
 ./install.sh
 ```
 
-如果你想指定 Python 或 shim 目录：
+可选参数：
 
 ```bash
-PYTHON_BIN=python3 SHIM_DIR="$HOME/.local/bin" ./install.sh
+PYTHON_BIN=python3.12 SHIM_DIR="$HOME/.local/bin" ./install.sh
 ```
 
-### 一键卸载
-
-macOS / Linux:
+### 卸载
 
 ```bash
-cd /Users/armewang/Documents/CS-Tech/Local/skillctl
-./uninstall.sh
+./uninstall.sh              # 保留缓存
+REMOVE_CACHE=1 ./uninstall.sh  # 同时删除缓存
 ```
 
-如果你还想一并删除本地缓存：
+或远程卸载：
 
 ```bash
-REMOVE_CACHE=1 ./uninstall.sh
+curl -fsSL https://raw.githubusercontent.com/pseudoctor/skillctl/main/uninstall.sh \
+  | SKILLCTL_REPO_URL="https://github.com/pseudoctor/skillctl.git" sh
 ```
 
-### 1. 重建索引
+## 使用
+
+### Shim 模式（推荐）
+
+安装 shim 后，直接像以前一样使用 CLI：
 
 ```bash
-python3 -m skillctl index rebuild
+# 安装 shim
+skillctl shim install
+
+# 直接使用，skillctl 会透明代理
+codex
+claude
+gemini
 ```
 
-### 2. 查看可见 skill
-
-```bash
-python3 -m skillctl list
-python3 -m skillctl inspect brainstorming
-python3 -m skillctl stats
-```
-
-如果你只想看全局或项目 skill：
-
-```bash
-python3 -m skillctl list --global-only
-python3 -m skillctl list --project-only
-python3 -m skillctl stats --global-only
-python3 -m skillctl inspect brainstorming --project-only
-```
-
-### 3. 直接启动包装器
-
-```bash
-python3 -m skillctl codex
-python3 -m skillctl claude
-python3 -m skillctl gemini
-```
-
-如果你只想在当前会话里暴露某一层：
-
-```bash
-python3 -m skillctl codex --global-only
-python3 -m skillctl claude --project-only
-```
-
-如果你想启用“候选 skill 提示但不自动加载”：
-
-```bash
-python3 -m skillctl codex --suggest-skills
-python3 -m skillctl claude --suggest-skills
-python3 -m skillctl gemini --suggest-skills
-```
-
-在会话里显式请求 skill：
-
-```text
-@brainstorming 帮我分析这个需求是否值得做
-```
-
-## 安装 shim
-
-如果你不想每次都敲 `python3 -m skillctl ...`，可以安装 shim：
-
-```bash
-python3 -m skillctl shim install
-python3 -m skillctl shim status
-```
-
-默认安装到：
-
-```text
-~/.local/bin
-```
-
-如果该目录不在 `PATH`，工具会提示你加入：
+shim 默认安装到 `~/.local/bin`。如不在 PATH 中，按提示添加：
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-安装后，你可以继续直接敲：
+### 直接启动模式
+
+不安装 shim 也可以用：
 
 ```bash
-claude
-codex
-gemini
+skillctl codex
+skillctl claude
+skillctl gemini
+
+# 等价于
+python3 -m skillctl codex
 ```
 
-这些命令会先进入 `skillctl`，再由它转发到底层 CLI。
+### 在会话中使用 @skill_name
 
-如果你想把 `--help`、`--version` 或显式子命令直接透传到底层 CLI，也可以直接这样用：
+启动 CLI 后正常使用，需要特定 skill 时加上 `@` 前缀：
+
+```text
+@brainstorming 帮我分析这个需求是否值得做
+```
+
+skillctl 会在你按下回车时注入该 skill 的完整内容。之后的消息无需再次引用 —— skill 已在对话上下文中。
+
+### 常用命令
 
 ```bash
-python3 -m skillctl codex --help
-python3 -m skillctl codex exec ...
+# 管理 skill 索引
+skillctl index rebuild          # 重建索引
+
+# 查看 skills
+skillctl list                   # 列出所有 skill
+skillctl list --global-only     # 只看全局 skill
+skillctl list --project-only    # 只看项目 skill
+skillctl inspect brainstorming  # 查看某个 skill 详情
+skillctl stats                  # 查看 token 统计
+
+# 管理 shim
+skillctl shim install           # 安装 shim
+skillctl shim status            # 查看 shim 状态
+skillctl shim check             # 验证 CLI 可用性
+skillctl shim remove            # 移除 shim
+
+# 其他
+skillctl --version              # 查看版本
 ```
 
-移除 shim：
+### 高级选项
 
 ```bash
-python3 -m skillctl shim remove
+# 限制 skill 范围
+skillctl codex --global-only     # 只加载全局 skill
+skillctl codex --project-only    # 只加载项目 skill
+
+# 启用建议模式（不自动加载，只提示相关 skill）
+skillctl codex --suggest-skills
+
+# 透传参数到底层 CLI
+skillctl codex --help
+skillctl codex exec --json
 ```
 
-如果你更习惯脚本方式，直接使用：
+### 转义 @ 符号
+
+如果你想在输入中写字面量 `@brainstorming` 而不触发加载：
+
+```text
+@@brainstorming 是一个 skill 名称
+```
+
+## 工作原理
+
+```
+┌──────────┐     ┌─────────────┐     ┌──────────┐
+│ 用户终端  │────→│  skillctl   │────→│ codex    │
+│ (raw mode)│     │             │     │ (子 PTY) │
+│          │←────│ 透传 + 注入  │←────│          │
+└──────────┘     └─────────────┘     └──────────┘
+```
+
+1. **隔离运行时**：创建临时 HOME 目录，内含空 `skills/` 和指向真实认证文件的 symlinks
+2. **PTY 代理**：通过 `pty.fork()` 创建子进程，设置真实终端为 raw mode
+3. **透明转发**：所有键盘输入立即转发给子进程（TUI 正常工作）
+4. **影子追踪**：`ShadowBuffer` 在后台追踪用户打字内容
+5. **按需注入**：检测到回车时，解析 `@skill_name`，将 skill 正文注入后再提交
+
+### Skill 索引
+
+skillctl 扫描以下目录查找 skills：
+
+| scope | 路径 |
+|-------|------|
+| global | `~/.codex/skills/`, `~/.claude/skills/`, `~/.gemini/skills/` |
+| project | `./skills/`, `./.codex/skills/`, `./.claude/skills/`, `./.gemini/skills/` |
+
+每个 skill 目录需包含 `SKILL.md`、`CLAUDE.md`、`GEMINI.md` 或 `README.md` 中的一个。
+
+支持 frontmatter 格式定义名称、别名和描述：
+
+```markdown
+---
+name: brainstorming
+description: creative ideation and feature planning
+aliases: [brainstorm, ideate]
+---
+
+# Brainstorming
+
+Help the user generate creative ideas...
+```
+
+### 优先级
+
+- project scope 优先于 global scope（同名 skill）
+- 各 CLI 的 skills 互相独立，`codex` 会话只加载 `codex` 和 `project` skills
+
+## 项目结构
+
+```
+skillctl/
+├── skillctl/
+│   ├── __init__.py       # 版本
+│   ├── __main__.py       # 入口
+│   ├── cli.py            # CLI 命令和解析
+│   ├── config.py         # 配置和路径
+│   ├── proxy.py          # PTY 代理、ShadowBuffer、LazySkillInjector
+│   ├── registry.py       # Skill 索引构建与缓存
+│   ├── resolver.py       # Skill 解析和建议
+│   ├── runtime.py        # 运行时隔离
+│   └── shims.py          # Shim 安装/管理
+├── tests/                # 单元测试（49 个）
+├── install.sh            # 安装脚本
+├── uninstall.sh          # 卸载脚本
+└── pyproject.toml        # 项目配置
+```
+
+## 环境变量
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `SKILLCTL_RUNTIME_ROOT` | 运行时临时目录的父目录 | `$TMPDIR/skillctl-runtime` |
+| `SKILLCTL_REAL_CODEX_BIN` | 真实 codex 二进制路径（shim 自动设置） | — |
+| `SKILLCTL_REAL_CLAUDE_BIN` | 真实 claude 二进制路径 | — |
+| `SKILLCTL_REAL_GEMINI_BIN` | 真实 gemini 二进制路径 | — |
+| `PYTHON_BIN` | install.sh 使用的 Python 路径 | `python3` |
+| `SHIM_DIR` | shim 安装目录 | `~/.local/bin` |
+
+## 注意事项
+
+- 仅支持 macOS / Linux，不支持 Windows
+- `@skill_name` 是唯一的懒加载触发方式
+- Token 统计是粗略估算（`字符数 / 4`），用于对比全量和按需的量级差
+- `--suggest-skills` 只在本地终端提示相关 skills，不自动注入
+- 对 `--help` / `--version` / 显式子命令，skillctl 直接透传到底层 CLI
+- Shim 不会覆盖非 skillctl 管理的同名文件
+- 长对话中，较早注入的 skill 可能因 context window 截断而丢失
+
+## 开发
 
 ```bash
-./install.sh
-./uninstall.sh
+# 运行测试
+python3 -m unittest discover -s tests -v
+
+# 或使用 pytest
+pip install -e ".[dev]"
+pytest
 ```
-
-## 注意
-
-- 当前版本的交互代理仍然是 MVP，但输入处理已经按“提交边界”工作，普通回车提交、多行粘贴和分片输入会比初版稳定很多。
-- `@skill_name` 是唯一正式支持的懒加载触发方式。
-- 当前仅支持 macOS / Linux。
-- `--suggest-skills` 会把可能相关的 skills 提示到本地终端，但不会自动注入 skill 正文。
-- 对 `--help` / `--version` / 显式子命令，`skillctl` 会直接透传到底层 CLI，而不是进入懒加载交互代理。
-- `--global-only` 和 `--project-only` 可以限制当前命令只看到某一层 skill。
-- 如果你只想输入字面量 `@brainstorming` 而不触发加载，可以写成 `@@brainstorming`。
-- token 统计是粗略估算，用于比较“全量 skill 载入”和“按需注入”的量级差，不是模型厂商的精确计费值。
-- `REMOVE_CACHE=1` 目前只删除安装仓库目录中的 `.skillctl` 缓存，不会扫描并删除其他项目工作区里的 `.skillctl`。
-- 还没有做关键词自动匹配和更细的 token 统计。

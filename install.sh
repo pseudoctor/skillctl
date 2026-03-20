@@ -44,6 +44,7 @@ PYTHONPATH_PREFIX="${REPO_DIR}${PYTHONPATH+:$PYTHONPATH}"
 
 echo "[skillctl] Validating CLI binaries for shim installation"
 PYTHONPATH="${PYTHONPATH_PREFIX}" "${PYTHON_BIN}" -m skillctl shim check --dir "${SHIM_DIR}"
+echo "[skillctl] Note: if a real CLI binary already occupies ${SHIM_DIR}/<name>, that provider will be skipped."
 
 echo "[skillctl] Installing package with ${PYTHON_BIN} -m pip install -e ."
 "${PYTHON_BIN}" -m pip install -e "${REPO_DIR}"
